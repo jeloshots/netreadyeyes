@@ -65,7 +65,7 @@ class WebcamApp:
         self.match_frame.grid(row=0, column=2, padx=10)
 
         # Scrollable Text widget for the debug log
-        self.debug_log = tk.Text(self.debug_frame, height=20, width=40, wrap=tk.WORD, state=tk.DISABLED)
+        self.debug_log = tk.Text(self.debug_frame, height=20, width=100, wrap=tk.WORD, state=tk.DISABLED)
         self.debug_log.grid(row=0, column=0)
 
         self.start_button = tk.Button(self.root, text="Start Webcam", command=self.start_webcam)
@@ -313,21 +313,23 @@ class WebcamApp:
                 
                 matches = flann.knnMatch(des1, des2, k=2)
 
-                # Apply Lowe's ratio test (helps remove false matches)
+                # # Apply Lowe's ratio test (helps remove false matches)
                 good_matches = []
                 for match in matches:
                     if len(match) < 2:
                         continue # skip if there aren't at least two matches
                     m, n = match[:2] # Unpack only the first two matches
-                    if m.distance < self.match_threshold * n.distance: #adjust ratio as needed
+                    
+                    #check to see if m is significantly better than n, and if so, consider it a good match
+                    #the lower the threshold, the strictor the test
+                    if m.distance < 0.75 * n.distance: #adjust ratio as needed
                         self.log_debug_message(f"good match found: {image_path}) - distance of {m.distance}!")
                         good_matches.append(m)
                 
-                self.log_debug_message(f"m.distance = {m.distance}")
-                if m.distance < best_score:
+                if good_matches:
                     #set the new best score (smallest ditance)
+                    best_match = min(good_matches, key=lambda m: m.distance)
                     best_score = m.distance
-                    best_match = image_path
 
             if best_match:
                 self.log_debug_message(f"Match detected (score of {best_score}) - adding {best_match} to recognition_queue!")
