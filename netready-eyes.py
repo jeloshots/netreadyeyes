@@ -243,11 +243,16 @@ class WebcamApp:
             roi_frame = frame[self.roi_y:self.roi_y + self.card_height, self.roi_x:self.roi_x + self.card_width]
             gray_frame = cv2.cvtColor(roi_frame, cv2.COLOR_BGR2GRAY)
 
-            res = cv2.matchTemplate(gray_frame, self.target_image, cv2.TM_CCOEFF_NORMED)
-            threshold = self.threshold_slider.get()
-            loc = np.where(res >= threshold)
+            orb = cv2.ORB_create()
+            kp1, des1 = orb.detectAndCompute(self.target_image, None)
+            kp2, des2 = orb.detectAndCompute(gray_frame, None)
 
-            match_found = len(loc[0]) > 0
+            bf = cv2.BFMatcher(cv2.NORM_HAMMING, crossCheck=True)
+            matches = bf.match(des1, des2)
+            matches = sorted(matches, key=lambda x: x.distance)
+
+            match_found = len(matches) > 10  # Threshold can be tuned
+            self.recognition_queue.put(match_found)
             self.recognition_queue.put(match_found)  # Send result to the queue
 
     def clear_match_label(self):
@@ -261,7 +266,7 @@ class WebcamApp:
         self.debug_log.config(state=tk.DISABLED)  # Disable text widget to prevent manual editing
 
     def export_to_obs(self, image_path):
-        """ Export the matched image to OBS as an image source. """
+        """ Export the matched image to OBS as an image source. """ 
         # OBS integration (if needed) can go here
 
     def on_roi_press(self, event):
@@ -272,10 +277,10 @@ class WebcamApp:
             self.roi_drag_offset = (event.x - self.roi_x, event.y - self.roi_y)
 
     def on_roi_drag(self, event):
-        """ Update the position of the ROI during dragging. """
         if self.roi_dragging:
-            self.roi_x = event.x - self.roi_drag_offset[0]
-            self.roi_y = event.y - self.roi_drag_offset[1]
+            self.roi_x = max(0, min(event.x - self.roi_drag_offset[0], self.cap.get(3) - self.card_width))
+            self.roi_y = max(0, min(event.y - self.roi_drag_offset[1], self.cap.get(4) - self.card_height))
+
 
     def on_roi_release(self, event):
         """ End the ROI dragging action. """
