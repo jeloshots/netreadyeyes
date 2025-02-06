@@ -17,14 +17,19 @@ class WebcamApp:
         # Initialize variables
         self.cap = None  # This will be set after webcam selection
         self.is_running = False
-        self.target_image = None
-        self.target_image_path = None
-        self.available_webcams = self.get_available_webcams()
-        self.match_found= False
+        self.match_found = False
+        self.recognition_queue = queue.Queue() # Queue for handling recognition results
+        self.recognition_thread = None
+        self.image_folder = None
+        self.target_images = []
+        self.matched_image_path = None
 
-        self.recognition_queue = queue.Queue()  # Queue for handling recognition results
-        self.recognition_thread = None  # Thread for recognition
-        self.is_running = False  # Control flag
+
+        #self.target_image = None
+        #self.target_image_path = None
+        self.available_webcams = self.get_available_webcams()
+        #self.match_found= False
+
 
         # Get the current script's directory
         script_directory = os.path.dirname(os.path.abspath(__file__))
@@ -33,7 +38,7 @@ class WebcamApp:
         self.default_image_folder = os.path.join(script_directory, 'images')  # Folder named 'images'
         
         # Set the current folder to the default image folder
-        self.current_image_folder = self.default_image_folder
+        self.image_folder = self.default_image_folder
 
         # Define the size of the "playing card" area (width, height)
         self.card_width = 200
@@ -54,6 +59,9 @@ class WebcamApp:
         # Debug log frame on the right
         self.debug_frame = tk.Frame(self.main_frame)
         self.debug_frame.grid(row=0, column=1, padx=10)
+                
+        self.match_frame = tk.Label(self.main_frame)
+        self.match_frame.grid(row=0, column=2, padx=10)
 
         # Scrollable Text widget for the debug log
         self.debug_log = tk.Text(self.debug_frame, height=20, width=40, wrap=tk.WORD, state=tk.DISABLED)
@@ -62,7 +70,7 @@ class WebcamApp:
         self.start_button = tk.Button(self.root, text="Start Webcam", command=self.start_webcam)
         self.stop_button = tk.Button(self.root, text="Stop Webcam", command=self.stop_webcam, state=tk.DISABLED)
         self.select_button = tk.Button(self.root, text="Load Image Folder", command=self.select_image_folder)
-        self.folder_label = tk.Label(self.root, text=f"Current Folder: {self.current_image_folder}")
+        self.folder_label = tk.Label(self.root, text=f"Current Folder: {self.image_folder}")
         # Webcam selection dropdown
         self.webcam_label = tk.Label(self.root, text="Select Webcam:")
         
@@ -98,7 +106,7 @@ class WebcamApp:
         self.freq_label = tk.Label(self.root, text="Image Recognition Frequency (ms):")
         self.freq_label.pack()
 
-        self.freq_slider = tk.Scale(self.root, from_=10, to_=2000, orient=tk.HORIZONTAL, label="Frequency (ms)")
+        self.freq_slider = tk.Scale(self.root, from_=10, to_=2000, orient=tk.HORIZONTAL, label="Frequency (ms)", command=self.update_frequency)
         self.freq_slider.set(200)  # Default frequency is 150 ms (6 calls per second)
         self.freq_slider.pack()
 
@@ -106,12 +114,13 @@ class WebcamApp:
         self.recognition_frequency = self.freq_slider.get()
 
         # Slider to adjust the image detection threshold
-        self.threshold_label = tk.Label(self.root, text="Image Detection Threshold:")
+        self.threshold_label = tk.Label(self.root, text="Image Detection Threshold (perc of keypoints:")
         self.threshold_label.pack()
 
-        self.threshold_slider = tk.Scale(self.root, from_=0.1, to=1.0, resolution=0.05, orient=tk.HORIZONTAL, label="Threshold")
-        self.threshold_slider.set(0.4)  # Default threshold value
+        self.threshold_slider = tk.Scale(self.root, from_=0, to=1, resolution=.05, orient=tk.HORIZONTAL, label="Threshold", command=self.update_threshold)
+        self.threshold_slider.set(.25)  # Default threshold
         self.threshold_slider.pack()
+        self.match_threshold = self.threshold_slider.get()  # Set initial match threshold in case it isn't used.
         
         self.match_label = tk.Label(self.root, text="", font=("Arial", 12, "bold"), fg="green")
         self.match_label.pack()
@@ -171,11 +180,19 @@ class WebcamApp:
         if self.cap is not None:
             self.cap.release()
         self.video_frame.config(image="")
+        self.match_frame.config(image="")
         self.start_button.config(state=tk.NORMAL)
         self.stop_button.config(state=tk.DISABLED)
 
         # Log message
         self.log_debug_message("Webcam stopped.")
+
+    def update_frequency(self, value):
+        self.recognition_frequency = int(value)
+
+    def update_threshold(self, value):
+        self.match_threshold = float(value)
+        self.log_debug_message(f"Updated match Threshold to {self.match_threshold}")
 
     def update_frame(self):
         if self.is_running:
@@ -214,46 +231,84 @@ class WebcamApp:
         try:
             while not self.recognition_queue.empty():
                 match_found = self.recognition_queue.get_nowait()
-                self.match_found = match_found
-                self.match_label.config(text="Match Found!" if match_found else "")
+
                 if match_found:
-                    self.log_debug_message("Image match detected!")
+                    self.display_matched_image()
+                    self.log_debug_message(f"Image match detected - {self.matched_image_path}")
                     self.root.after(1000, self.clear_match_label)
         except queue.Empty:
             pass
 
+    def display_matched_image(self):
+        if self.matched_image_path:
+            image = Image.open(self.matched_image_path)
+            image_resized = image.resize((200, 300), Image.LANCZOS)
+            photo = ImageTk.PhotoImage(image=image_resized)
+            self.match_frame.config(image=photo)
+            self.match_frame.image = photo
+
     def select_image_folder(self):
         """ Let the user select a folder of images. """
-        folder_path = filedialog.askdirectory(initialdir=self.current_image_folder)
+        folder_path = filedialog.askdirectory(initialdir=self.image_folder)
         if folder_path:
-            self.current_image_folder = folder_path
-            self.folder_label.config(text=f"Current Folder: {self.current_image_folder}")
-            image_files = [f for f in os.listdir(folder_path) if f.endswith('.png')]
-            if image_files:
-                self.target_image_path = os.path.join(folder_path, image_files[0])
-                self.target_image = cv2.imread(self.target_image_path, cv2.IMREAD_GRAYSCALE)
-                messagebox.showinfo("Image Loaded", f"Loaded image: {self.target_image_path}")
-                self.log_debug_message(f"Loaded image: {self.target_image_path}")
+            self.image_folder = folder_path
+            self.folder_label.config(text=f"Current Folder: {self.image_folder}")
+            self.target_images = [f for f in os.listdir(folder_path) if f.endswith('.png') or f.endswith('.jpg')]
+            if self.target_images:
+                self.log_debug_message(f"Loaded {len(self.target_images)} images.")
             else:
-                messagebox.showerror("Error", "No PNG images found in the selected folder.")
+                messagebox.showerror("Error", "No PNG or JPG images found in the selected folder.")
 
     def perform_image_recognition(self, frame):
         """ Perform image recognition in a separate thread. """
-        if self.target_image is not None:
+        if self.image_folder and self.target_images:
             roi_frame = frame[self.roi_y:self.roi_y + self.card_height, self.roi_x:self.roi_x + self.card_width]
-            gray_frame = cv2.cvtColor(roi_frame, cv2.COLOR_BGR2GRAY)
+            #gray_frame = cv2.cvtColor(roi_frame, cv2.COLOR_BGR2GRAY)
 
             orb = cv2.ORB_create()
-            kp1, des1 = orb.detectAndCompute(self.target_image, None)
-            kp2, des2 = orb.detectAndCompute(gray_frame, None)
+            # find the keypoints and descriptors of the webcam frame with SIFT
+            kp2, des2 = orb.detectAndCompute(roi_frame, None)
+            # create BFMatcher object
+            bf = cv2.BFMatcher(cv2.NORM_HAMMING, crossCheck=False)
 
-            bf = cv2.BFMatcher(cv2.NORM_HAMMING, crossCheck=True)
-            matches = bf.match(des1, des2)
-            matches = sorted(matches, key=lambda x: x.distance)
+            #before we look through any images, reset our scores to zero
+            best_match = None
+            best_score = 0
 
-            match_found = len(matches) > 10  # Threshold can be tuned
-            self.recognition_queue.put(match_found)
-            self.recognition_queue.put(match_found)  # Send result to the queue
+            for image_name in self.target_images:
+                image_path = os.path.join(self.image_folder, image_name) # use full path
+                target_image = cv2.imread(image_path, cv2.IMREAD_GRAYSCALE)
+                
+                if target_image is None:
+                    continue # skip if image couldn't be loaded
+                
+                #find they keypoints and descriptors of the current image in the folder
+                kp1, des1 = orb.detectAndCompute(target_image, None)
+
+                #initialize matches
+                matches = []
+                if des1 is not None and des2 is not None:
+                    #matches = bf.match(des1, des2)
+                    matches = bf.knnMatch(des1, des2, k=2)
+                    close_match = [m for m, n in matches if m.distance < 0.75 *n.distance]                 
+                
+                
+
+                match_ratio = len(close_match) / len(kp1) if kp1 else 0
+
+                self.log_debug_message(f"match_ratio = {match_ratio}")
+                if match_ratio > self.match_threshold: # Only consider it a match if at least [threshold]% of keypoints match
+                    #we found a match that is closer than the required threshold on keypoint %
+                    if len(close_match) > best_score:
+                        #set the new best score
+                        best_score = len(close_match)
+                        best_match = image_path
+                    
+                    break
+
+            if best_match:
+                self.log_debug_message(f"Match detected (score of {best_score}) - adding {best_match} to recognition_queue!")
+                self.recognition_queue.put(best_match) # Send result to the queue
 
     def clear_match_label(self):
         self.match_label.config(text="")
