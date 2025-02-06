@@ -8,6 +8,7 @@ import numpy as np
 import wmi
 import threading
 import queue
+import random
 
 class WebcamApp:
     def __init__(self, root):
@@ -91,7 +92,7 @@ class WebcamApp:
         
         # Default to first webcam in the list
         if self.available_webcams:
-            self.webcam_combobox.set(self.available_webcams[0])
+            self.webcam_combobox.set(self.available_webcams[1]) #default to #1 for Eric's Machine
 
         # Bind mouse events for moving/resizing the ROI
         self.video_frame.grid(row=0, column=0, sticky="nsew")  # Allow expansion
@@ -107,7 +108,7 @@ class WebcamApp:
         self.freq_label.pack()
 
         self.freq_slider = tk.Scale(self.root, from_=10, to_=2000, orient=tk.HORIZONTAL, label="Frequency (ms)", command=self.update_frequency)
-        self.freq_slider.set(200)  # Default frequency is 150 ms (6 calls per second)
+        self.freq_slider.set(500)  # Default frequency is 500 ms (2 calls per second)
         self.freq_slider.pack()
 
         # Default value for the frequency (in milliseconds)
@@ -259,52 +260,74 @@ class WebcamApp:
             else:
                 messagebox.showerror("Error", "No PNG or JPG images found in the selected folder.")
 
+            #randomize the order to remove selection bias
+            random.shuffle(self.target_images)
+
+
     def perform_image_recognition(self, frame):
         """ Perform image recognition in a separate thread. """
         if self.image_folder and self.target_images:
             roi_frame = frame[self.roi_y:self.roi_y + self.card_height, self.roi_x:self.roi_x + self.card_width]
             #gray_frame = cv2.cvtColor(roi_frame, cv2.COLOR_BGR2GRAY)
 
+            #cv2.imshow("ROI Frame", roi_frame)
+            #cv2.waitKey(1) #Ensures the OpenCV window refreshes
+
             orb = cv2.ORB_create()
             # find the keypoints and descriptors of the webcam frame with SIFT
             kp2, des2 = orb.detectAndCompute(roi_frame, None)
+            
+            # FLANN Matcher Parameters (optimized for ORB/SIFT)
+            index_params = dict(algorithm=6,  # FLANN LSH (Locality Sensitive Hashing) for ORB
+                                table_number=6,  # Number of hash tables
+                                key_size=12,  # Size of the key in bits
+                                multi_probe_level=1)  # Number of probes per table
+
+            search_params = dict(checks=50)  # Number of nearest neighbors to check
+
+            flann = cv2.FlannBasedMatcher(index_params, search_params)
+
+            
             # create BFMatcher object
-            bf = cv2.BFMatcher(cv2.NORM_HAMMING, crossCheck=False)
+            #bf = cv2.BFMatcher(cv2.NORM_HAMMING, crossCheck=False)
 
             #before we look through any images, reset our scores to zero
             best_match = None
-            best_score = 0
+            best_score = 300 #use a high number to start - best matches are the lowest distance
 
             for image_name in self.target_images:
                 image_path = os.path.join(self.image_folder, image_name) # use full path
                 target_image = cv2.imread(image_path, cv2.IMREAD_GRAYSCALE)
                 
+                self.log_debug_message(f"comparing frame to {image_path}")
+
                 if target_image is None:
                     continue # skip if image couldn't be loaded
                 
                 #find they keypoints and descriptors of the current image in the folder
                 kp1, des1 = orb.detectAndCompute(target_image, None)
 
-                #initialize matches
-                matches = []
-                if des1 is not None and des2 is not None:
-                    #matches = bf.match(des1, des2)
-                    matches = bf.knnMatch(des1, des2, k=2)
-                    close_match = [m for m, n in matches if m.distance < 0.75 *n.distance]                 
+                if des1 is None or des2 is None:
+                    self.log_debug_message("Error - need two images to compare")
+                    return # Avoid running knnMatch() on None values
                 
+                matches = flann.knnMatch(des1, des2, k=2)
+
+                # Apply Lowe's ratio test (helps remove false matches)
+                good_matches = []
+                for match in matches:
+                    if len(match) < 2:
+                        continue # skip if there aren't at least two matches
+                    m, n = match[:2] # Unpack only the first two matches
+                    if m.distance < self.match_threshold * n.distance: #adjust ratio as needed
+                        self.log_debug_message(f"good match found: {image_path}) - distance of {m.distance}!")
+                        good_matches.append(m)
                 
-
-                match_ratio = len(close_match) / len(kp1) if kp1 else 0
-
-                self.log_debug_message(f"match_ratio = {match_ratio}")
-                if match_ratio > self.match_threshold: # Only consider it a match if at least [threshold]% of keypoints match
-                    #we found a match that is closer than the required threshold on keypoint %
-                    if len(close_match) > best_score:
-                        #set the new best score
-                        best_score = len(close_match)
-                        best_match = image_path
-                    
-                    break
+                self.log_debug_message(f"m.distance = {m.distance}")
+                if m.distance < best_score:
+                    #set the new best score (smallest ditance)
+                    best_score = m.distance
+                    best_match = image_path
 
             if best_match:
                 self.log_debug_message(f"Match detected (score of {best_score}) - adding {best_match} to recognition_queue!")
