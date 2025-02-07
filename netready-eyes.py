@@ -199,6 +199,7 @@ class WebcamApp:
         if self.is_running:
             ret, frame = self.cap.read()
             if ret:
+                self.log_debug_message("ret!")
                 color = (0, 0, 255) if self.match_found else (0, 255, 0)
                 cv2.rectangle(frame, (self.roi_x, self.roi_y),
                               (self.roi_x + self.card_width, self.roi_y + self.card_height), color, 3)
@@ -215,9 +216,9 @@ class WebcamApp:
                 self.video_frame.config(image=photo)
                 self.video_frame.image = photo
 
-
                 # Start recognition in a separate thread if not already running
                 if self.recognition_thread is None or not self.recognition_thread.is_alive():
+                    self.log_debug_message("alive!")
                     self.recognition_thread = threading.Thread(target=self.perform_image_recognition, args=(frame,))
                     self.recognition_thread.daemon = True
                     self.recognition_thread.start()
@@ -263,6 +264,34 @@ class WebcamApp:
             #randomize the order to remove selection bias
             random.shuffle(self.target_images)
 
+    @staticmethod
+    def draw_and_pause(image1, keypoints1, image2, keypoints2, matches):
+        """ Draws matches and pauses execution until a key is pressed """
+        matched_image = cv2.drawMatches(image1, keypoints1, image2, keypoints2, matches, None,
+                                        flags=cv2.DrawMatchesFlags_NOT_DRAW_SINGLE_POINTS)
+
+        # Show the matched features
+        cv2.imshow("Matches", matched_image)
+
+        # Wait for user input to continue (press any key)
+        print("Press any key to continue to the next image...")
+        cv2.waitKey(0)  # Wait indefinitely until a key is pressed
+        cv2.destroyAllWindows()
+    
+    @staticmethod
+    def draw(image1, keypoints1, image2, keypoints2, matches):
+        """ Draws matches and pauses execution until a key is pressed """
+
+        #destroy the last window
+        cv2.destroyAllWindows()
+
+        matched_image = cv2.drawMatches(image1, keypoints1, image2, keypoints2, matches, None,
+                                        flags=cv2.DrawMatchesFlags_NOT_DRAW_SINGLE_POINTS)
+
+        # Show the matched features
+        cv2.imshow("Matches", matched_image)
+
+        # Wait for user input to continue (press any key)
 
     def perform_image_recognition(self, frame):
         """ Perform image recognition in a separate thread. """
@@ -273,6 +302,11 @@ class WebcamApp:
             #cv2.imshow("ROI Frame", roi_frame)
             #cv2.waitKey(1) #Ensures the OpenCV window refreshes
 
+            width = 300
+            height = 400
+
+            roi_frame = cv2.resize(roi_frame, (width, height))
+            
             orb = cv2.ORB_create()
             # find the keypoints and descriptors of the webcam frame with SIFT
             kp2, des2 = orb.detectAndCompute(roi_frame, None)
@@ -298,7 +332,8 @@ class WebcamApp:
             for image_name in self.target_images:
                 image_path = os.path.join(self.image_folder, image_name) # use full path
                 target_image = cv2.imread(image_path, cv2.IMREAD_GRAYSCALE)
-                
+                target_image = cv2.resize(target_image, (width, height))
+
                 self.log_debug_message(f"comparing frame to {image_path}")
 
                 if target_image is None:
@@ -323,10 +358,13 @@ class WebcamApp:
                     #check to see if m is significantly better than n, and if so, consider it a good match
                     #the lower the threshold, the strictor the test
                     if m.distance < 0.75 * n.distance: #adjust ratio as needed
-                        self.log_debug_message(f"good match found: {image_path}) - distance of {m.distance}!")
+                        #self.log_debug_message(f"good match found: {image_path}) - distance of {m.distance}!")
                         good_matches.append(m)
                 
                 if good_matches:
+                    self.draw_and_pause(target_image, kp1, roi_frame, kp2, good_matches)
+                    #self.draw(target_image, kp1, roi_frame, kp2, good_matches)
+
                     #set the new best score (smallest ditance)
                     best_match = min(good_matches, key=lambda m: m.distance)
                     best_score = m.distance
