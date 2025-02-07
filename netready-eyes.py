@@ -199,7 +199,7 @@ class WebcamApp:
         if self.is_running:
             ret, frame = self.cap.read()
             if ret:
-                self.log_debug_message("ret!")
+                #self.log_debug_message("in ret loop")
                 color = (0, 0, 255) if self.match_found else (0, 255, 0)
                 cv2.rectangle(frame, (self.roi_x, self.roi_y),
                               (self.roi_x + self.card_width, self.roi_y + self.card_height), color, 3)
@@ -218,7 +218,7 @@ class WebcamApp:
 
                 # Start recognition in a separate thread if not already running
                 if self.recognition_thread is None or not self.recognition_thread.is_alive():
-                    self.log_debug_message("alive!")
+                    #self.log_debug_message("alive!")
                     self.recognition_thread = threading.Thread(target=self.perform_image_recognition, args=(frame,))
                     self.recognition_thread.daemon = True
                     self.recognition_thread.start()
@@ -235,11 +235,16 @@ class WebcamApp:
                 match_found = self.recognition_queue.get_nowait()
 
                 if match_found:
+                    self.matched_image_path = match_found
+                    self.match_label.config(text=f"Matched {self.matched_image_path}")
                     self.display_matched_image()
                     self.log_debug_message(f"Image match detected - {self.matched_image_path}")
                     self.root.after(1000, self.clear_match_label)
         except queue.Empty:
             pass
+
+    def clear_match_label(self):
+        self.match_label.config(text="")
 
     def display_matched_image(self):
         if self.matched_image_path:
@@ -264,8 +269,7 @@ class WebcamApp:
             #randomize the order to remove selection bias
             random.shuffle(self.target_images)
 
-    @staticmethod
-    def draw_and_pause(image1, keypoints1, image2, keypoints2, matches):
+    def draw_and_pause(self, image1, keypoints1, image2, keypoints2, matches):
         """ Draws matches and pauses execution until a key is pressed """
         matched_image = cv2.drawMatches(image1, keypoints1, image2, keypoints2, matches, None,
                                         flags=cv2.DrawMatchesFlags_NOT_DRAW_SINGLE_POINTS)
@@ -278,8 +282,7 @@ class WebcamApp:
         cv2.waitKey(0)  # Wait indefinitely until a key is pressed
         cv2.destroyAllWindows()
     
-    @staticmethod
-    def draw(image1, keypoints1, image2, keypoints2, matches):
+    def draw(self, image1, keypoints1, image2, keypoints2, matches):
         """ Draws matches and pauses execution until a key is pressed """
 
         #destroy the last window
@@ -295,6 +298,9 @@ class WebcamApp:
 
     def perform_image_recognition(self, frame):
         """ Perform image recognition in a separate thread. """
+
+        self.log_debug_message("Starting perform_image_recognition")
+        
         if self.image_folder and self.target_images:
             roi_frame = frame[self.roi_y:self.roi_y + self.card_height, self.roi_x:self.roi_x + self.card_width]
             #gray_frame = cv2.cvtColor(roi_frame, cv2.COLOR_BGR2GRAY)
@@ -327,9 +333,14 @@ class WebcamApp:
 
             #before we look through any images, reset our scores to zero
             best_match = None
-            best_score = 300 #use a high number to start - best matches are the lowest distance
+            lowest_dist = 300.0 #use a high number to start - best matches are the lowest distance
+
+            self.log_debug_message("entering the loop")
 
             for image_name in self.target_images:
+
+                self.log_debug_message("top of loop")
+
                 image_path = os.path.join(self.image_folder, image_name) # use full path
                 target_image = cv2.imread(image_path, cv2.IMREAD_GRAYSCALE)
                 target_image = cv2.resize(target_image, (width, height))
@@ -337,6 +348,7 @@ class WebcamApp:
                 self.log_debug_message(f"comparing frame to {image_path}")
 
                 if target_image is None:
+                    self.log_debug_message("skipping - couldn't load")
                     continue # skip if image couldn't be loaded
                 
                 #find they keypoints and descriptors of the current image in the folder
@@ -349,7 +361,6 @@ class WebcamApp:
                 matches = flann.knnMatch(des1, des2, k=2)
 
                 # # Apply Lowe's ratio test (helps remove false matches)
-                good_matches = []
                 for match in matches:
                     if len(match) < 2:
                         continue # skip if there aren't at least two matches
@@ -358,23 +369,21 @@ class WebcamApp:
                     #check to see if m is significantly better than n, and if so, consider it a good match
                     #the lower the threshold, the strictor the test
                     if m.distance < 0.75 * n.distance: #adjust ratio as needed
-                        #self.log_debug_message(f"good match found: {image_path}) - distance of {m.distance}!")
-                        good_matches.append(m)
-                
-                if good_matches:
-                    self.draw_and_pause(target_image, kp1, roi_frame, kp2, good_matches)
-                    #self.draw(target_image, kp1, roi_frame, kp2, good_matches)
+                        
+                        if m.distance < lowest_dist:
+                            self.log_debug_message(f"New lowest distance for {image_path}) - distance of {m.distance}!")
+                            #self.draw(target_image, kp1, roi_frame, kp2, good_matches)
+                            #set the new best score (smallest ditance)
+                            best_match = image_path
+                            lowest_dist = m.distance
 
-                    #set the new best score (smallest ditance)
-                    best_match = min(good_matches, key=lambda m: m.distance)
-                    best_score = m.distance
-
+            self.log_debug_message("if best_match")
             if best_match:
-                self.log_debug_message(f"Match detected (score of {best_score}) - adding {best_match} to recognition_queue!")
+                self.draw_and_pause(target_image, kp1, roi_frame, kp2, match)
+                self.log_debug_message(f"Match detected (distance of {lowest_dist}) - adding {best_match} to recognition_queue!")
                 self.recognition_queue.put(best_match) # Send result to the queue
 
-    def clear_match_label(self):
-        self.match_label.config(text="")
+            self.log_debug_message("end of function")
 
     def log_debug_message(self, message):
         """ Log debug messages to the Text widget. """
