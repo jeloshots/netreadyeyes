@@ -108,7 +108,7 @@ class WebcamApp:
         self.freq_label.pack()
 
         self.freq_slider = tk.Scale(self.root, from_=10, to_=2000, orient=tk.HORIZONTAL, label="Frequency (ms)", command=self.update_frequency)
-        self.freq_slider.set(500)  # Default frequency is 500 ms (2 calls per second)
+        self.freq_slider.set(100)  # Default frequency is 100 ms (10 calls per second)
         self.freq_slider.pack()
 
         # Default value for the frequency (in milliseconds)
@@ -118,8 +118,8 @@ class WebcamApp:
         self.threshold_label = tk.Label(self.root, text="Image Detection Threshold (perc of keypoints:")
         self.threshold_label.pack()
 
-        self.threshold_slider = tk.Scale(self.root, from_=0, to=1, resolution=.05, orient=tk.HORIZONTAL, label="Threshold", command=self.update_threshold)
-        self.threshold_slider.set(.25)  # Default threshold
+        self.threshold_slider = tk.Scale(self.root, from_=0, to=100, resolution=1, orient=tk.HORIZONTAL, label="Threshold", command=self.update_threshold)
+        self.threshold_slider.set(20)  # Default threshold
         self.threshold_slider.pack()
         self.match_threshold = self.threshold_slider.get()  # Set initial match threshold in case it isn't used.
         
@@ -208,8 +208,8 @@ class WebcamApp:
                 image = Image.fromarray(frame_rgb)
                 
                 # Resize the frame to fit within a specified size (adjust as needed)
-                desired_width = 400  # Set a fixed width or make it dynamic
-                desired_height = 300  # Adjust height accordingly
+                desired_width = 640  # Set a fixed width or make it dynamic
+                desired_height = 480  # Adjust height accordingly
                 image_resized = image.resize((desired_width, desired_height), Image.LANCZOS)
 
                 photo = ImageTk.PhotoImage(image=image_resized)
@@ -298,8 +298,6 @@ class WebcamApp:
 
     def perform_image_recognition(self, frame):
         """ Perform image recognition in a separate thread. """
-
-        self.log_debug_message("Starting perform_image_recognition")
         
         if self.image_folder and self.target_images:
             roi_frame = frame[self.roi_y:self.roi_y + self.card_height, self.roi_x:self.roi_x + self.card_width]
@@ -335,17 +333,13 @@ class WebcamApp:
             best_match = None
             lowest_dist = 300.0 #use a high number to start - best matches are the lowest distance
 
-            self.log_debug_message("entering the loop")
-
             for image_name in self.target_images:
-
-                self.log_debug_message("top of loop")
 
                 image_path = os.path.join(self.image_folder, image_name) # use full path
                 target_image = cv2.imread(image_path, cv2.IMREAD_GRAYSCALE)
                 target_image = cv2.resize(target_image, (width, height))
 
-                self.log_debug_message(f"comparing frame to {image_path}")
+                #self.log_debug_message(f"comparing frame to {image_path}")
 
                 if target_image is None:
                     self.log_debug_message("skipping - couldn't load")
@@ -358,7 +352,8 @@ class WebcamApp:
                     self.log_debug_message("Error - need two images to compare")
                     return # Avoid running knnMatch() on None values
                 
-                matches = flann.knnMatch(des1, des2, k=2)
+                k = min(2, len(des2))
+                matches = flann.knnMatch(des1, des2, k=k)
 
                 # # Apply Lowe's ratio test (helps remove false matches)
                 for match in matches:
@@ -371,19 +366,15 @@ class WebcamApp:
                     if m.distance < 0.75 * n.distance: #adjust ratio as needed
                         
                         if m.distance < lowest_dist:
-                            self.log_debug_message(f"New lowest distance for {image_path}) - distance of {m.distance}!")
-                            #self.draw(target_image, kp1, roi_frame, kp2, good_matches)
+                            #self.log_debug_message(f"New lowest distance for {image_path}) - distance of {m.distance}!")
                             #set the new best score (smallest ditance)
                             best_match = image_path
                             lowest_dist = m.distance
 
-            self.log_debug_message("if best_match")
-            if best_match:
-                self.draw_and_pause(target_image, kp1, roi_frame, kp2, match)
+            if best_match and lowest_dist < self.match_threshold:
+                #self.draw_and_pause(target_image, kp1, roi_frame, kp2, match)
                 self.log_debug_message(f"Match detected (distance of {lowest_dist}) - adding {best_match} to recognition_queue!")
                 self.recognition_queue.put(best_match) # Send result to the queue
-
-            self.log_debug_message("end of function")
 
     def log_debug_message(self, message):
         """ Log debug messages to the Text widget. """
