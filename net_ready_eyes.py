@@ -309,6 +309,8 @@ class WebcamApp:
     def perform_image_recognition(self, frame):
         """ Perform image recognition in a separate thread. """
         start_time = time.time()
+        knn_time = 0
+        filter_time = 0
         if self.low_res_image_folder and self.target_images:
 
             roi_frame = frame[self.roi_y:self.roi_y + self.roi_height, self.roi_x:self.roi_x + self.roi_width]
@@ -349,16 +351,14 @@ class WebcamApp:
 
                     if des1 is None or des2 is None:
                         continue  # Avoid running knnMatch() on None values
-                    
-                    matches = self.flann.knnMatch(des1, des2, k=min(2, len(des2)))
-                    #find they keypoints and descriptors of the current image in the folder
-                    kp1, des1 = self.orb.detectAndCompute(target_image, None)
 
-                    if des1 is None or des2 is None:
-                        self.log_debug_message("Error - need two images to compare")
-                        return # Avoid running knnMatch() on None values
-                    
+                    probe_start = time.time()
+                    matches = self.flann.knnMatch(des1, des2, k=min(2, len(des2)))
+                    probe_end = time.time()
+                    knn_time += probe_end - probe_start
+
                     # # Apply Lowe's ratio test (helps remove false matches)
+                    probe_start = time.time()
                     for match in matches:
                         if len(match) < 2:
                             continue # skip if there aren't at least two matches
@@ -373,6 +373,8 @@ class WebcamApp:
                                 #set the new best score (smallest ditance)
                                 low_res_match = image_path
                                 lowest_dist = m.distance
+                    probe_end = time.time()
+                    filter_time += probe_end - probe_start
 
             if low_res_match and lowest_dist < self.match_threshold:
                 #self.draw_and_pause(target_image, kp1, roi_frame, kp2, match)
@@ -390,6 +392,7 @@ class WebcamApp:
             end_time = time.time()
             elapsed_time = end_time - start_time
             self.log_debug_message(f"Image recognition took {elapsed_time:.4f} seconds for {len(self.target_images)} images.")
+            self.log_debug_message(f"knn: {knn_time:.4f}, filter: {filter_time:.4f}")
 
 
     def log_debug_message(self, message):
