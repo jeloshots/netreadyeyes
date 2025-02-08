@@ -336,26 +336,19 @@ class WebcamApp:
                     self.log_debug_message("skipping - couldn't load")
                     continue # skip if image couldn't be loaded
                 
-                # Generate rotated versions
-                rotated_images = [target_image]
-                angles = [90, 180, 270]
+                # Generate rotated versions of the image file to compare against the roi frame
+                angles = [0, 90, 180, 270]
                 for angle in angles:
-                    rotated_images.append(self.rotate_image(target_image, angle))
 
-                    for rotated_target in rotated_images:
-                        kp1, des1 = self.orb.detectAndCompute(rotated_target, None)
-
-                    if des1 is None or des2 is None:
-                        continue  # Avoid running knnMatch() on None values
-                    
-                    matches = self.flann.knnMatch(des1, des2, k=min(2, len(des2)))
                     #find they keypoints and descriptors of the current image in the folder
-                    kp1, des1 = self.orb.detectAndCompute(target_image, None)
+                    kp1, des1 = self.orb.detectAndCompute(self.rotate_image(target_image, angle), None)
 
                     if des1 is None or des2 is None:
                         self.log_debug_message("Error - need two images to compare")
                         return # Avoid running knnMatch() on None values
-                    
+
+                    matches = self.flann.knnMatch(des1, des2, k=min(2, len(des2)))
+
                     # # Apply Lowe's ratio test (helps remove false matches)
                     for match in matches:
                         if len(match) < 2:
