@@ -8,6 +8,7 @@ import threading
 import queue
 import random
 from pygrabber.dshow_graph import FilterGraph
+import time
 
 class WebcamApp:
     def __init__(self, root):
@@ -20,7 +21,6 @@ class WebcamApp:
         self.match_found = False
         self.recognition_queue = queue.Queue() # Queue for handling recognition results
         self.recognition_thread = None
-        self.image_folder = None
         self.target_images = []
         self.matched_image_path = None
         self.available_webcams = self.find_webcams()
@@ -28,11 +28,14 @@ class WebcamApp:
         # Get the current script's directory
         script_directory = os.path.dirname(os.path.abspath(__file__))
         
-        # Set the default image folder relative to the script directory
-        self.default_image_folder = os.path.join(script_directory, 'images')  # Folder named 'images'
-        
+        # Set the default image folders relative to the script directory - low resolution images for parsing/matching,
+        # and high resolution files for displaying once a match is found.
+        # IMPORTANT: The file names in these folders must match exactly. I have found Windows PowerToys Image Resizer to be helpful for scaling files:
+        # https://learn.microsoft.com/en-us/windows/powertoys/install
+        self.default_image_folder = os.path.join(script_directory, 'low_res_images')  # Folder named 'images'
+        self.high_res_image_folder = os.path.join(script_directory, 'high_res_images')  # Folder named 'images'
         # Set the current folder to the default image folder
-        self.image_folder = self.default_image_folder
+        self.low_res_image_folder = self.default_image_folder
 
         # Define the size of the "playing card" area (width, height)
         self.card_width = 200
@@ -64,7 +67,7 @@ class WebcamApp:
         self.start_button = tk.Button(self.root, text="Start Webcam", command=self.start_webcam)
         self.stop_button = tk.Button(self.root, text="Stop Webcam", command=self.stop_webcam, state=tk.DISABLED)
         self.select_button = tk.Button(self.root, text="Load Image Folder", command=self.select_image_folder)
-        self.folder_label = tk.Label(self.root, text=f"Current Folder: {self.image_folder}")
+        self.folder_label = tk.Label(self.root, text=f"Current Folder: {self.low_res_image_folder}")
         # Webcam selection dropdown
         self.webcam_label = tk.Label(self.root, text="Select Webcam:")
         
@@ -231,17 +234,17 @@ class WebcamApp:
     def display_matched_image(self):
         if self.matched_image_path:
             image = Image.open(self.matched_image_path)
-            image_resized = image.resize((200, 300), Image.LANCZOS)
+            image_resized = image.resize((300, 419), Image.LANCZOS)
             photo = ImageTk.PhotoImage(image=image_resized)
             self.match_frame.config(image=photo)
             self.match_frame.image = photo
 
     def select_image_folder(self):
         """ Let the user select a folder of images. """
-        folder_path = filedialog.askdirectory(initialdir=self.image_folder)
+        folder_path = filedialog.askdirectory(initialdir=self.low_res_image_folder)
         if folder_path:
-            self.image_folder = folder_path
-            self.folder_label.config(text=f"Current Folder: {self.image_folder}")
+            self.low_res_image_folder = folder_path
+            self.folder_label.config(text=f"Current Folder: {self.low_res_image_folder}")
             self.target_images = [f for f in os.listdir(folder_path) if f.endswith('.png') or f.endswith('.jpg')]
             if self.target_images:
                 self.log_debug_message(f"Loaded {len(self.target_images)} images.")
@@ -280,16 +283,17 @@ class WebcamApp:
 
     def perform_image_recognition(self, frame):
         """ Perform image recognition in a separate thread. """
-        
-        if self.image_folder and self.target_images:
+        start_time = time.time()
+        if self.low_res_image_folder and self.target_images:
+
             roi_frame = frame[self.roi_y:self.roi_y + self.card_height, self.roi_x:self.roi_x + self.card_width]
             #gray_frame = cv2.cvtColor(roi_frame, cv2.COLOR_BGR2GRAY)
 
             #cv2.imshow("ROI Frame", roi_frame)
             #cv2.waitKey(1) #Ensures the OpenCV window refreshes
 
-            width = 300
-            height = 400
+            width = 95
+            height = 133
 
             roi_frame = cv2.resize(roi_frame, (width, height))
             
@@ -312,14 +316,14 @@ class WebcamApp:
             #bf = cv2.BFMatcher(cv2.NORM_HAMMING, crossCheck=False)
 
             #before we look through any images, reset our scores to zero
-            best_match = None
+            low_res_match = None
             lowest_dist = 300.0 #use a high number to start - best matches are the lowest distance
 
             for image_name in self.target_images:
 
-                image_path = os.path.join(self.image_folder, image_name) # use full path
+                image_path = os.path.join(self.low_res_image_folder, image_name) # use full path
                 target_image = cv2.imread(image_path, cv2.IMREAD_GRAYSCALE)
-                target_image = cv2.resize(target_image, (width, height))
+                #target_image = cv2.resize(target_image, (width, height))
 
                 #self.log_debug_message(f"comparing frame to {image_path}")
 
@@ -350,13 +354,26 @@ class WebcamApp:
                         if m.distance < lowest_dist:
                             #self.log_debug_message(f"New lowest distance for {image_path}) - distance of {m.distance}!")
                             #set the new best score (smallest ditance)
-                            best_match = image_path
+                            low_res_match = image_path
                             lowest_dist = m.distance
 
-            if best_match and lowest_dist < self.match_threshold:
+            if low_res_match and lowest_dist < self.match_threshold:
                 #self.draw_and_pause(target_image, kp1, roi_frame, kp2, match)
-                self.log_debug_message(f"Match detected (distance of {lowest_dist}) - adding {best_match} to recognition_queue!")
-                self.recognition_queue.put(best_match) # Send result to the queue
+                high_res_match = os.path.join(self.high_res_image_folder, os.path.basename(low_res_match))
+                self.log_debug_message(f"Match detected (distance of {lowest_dist}) - adding {low_res_match} to recognition_queue!")
+                # Ensure the high-resolution file exists before adding it to the queue
+                if os.path.exists(high_res_match):
+                    self.log_debug_message(f"Match detected - using high-res version: {high_res_match}")
+                    self.recognition_queue.put(high_res_match)
+                else:
+                    self.log_debug_message(f"High-resolution version not found ({high_res_match}), using low-res: {low_res_match}")
+                    self.recognition_queue.put(low_res_match)
+
+            #print how long parsing all of the images took
+            end_time = time.time()
+            elapsed_time = end_time - start_time
+            self.log_debug_message(f"Image recognition took {elapsed_time:.4f} seconds for {len(self.target_images)} images.")
+
 
     def log_debug_message(self, message):
         """ Log debug messages to the Text widget. """
