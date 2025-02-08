@@ -4,10 +4,10 @@ from tkinter import filedialog, messagebox
 from tkinter import ttk
 import os
 from PIL import Image, ImageTk
-import wmi
 import threading
 import queue
 import random
+from pygrabber.dshow_graph import FilterGraph
 
 class WebcamApp:
     def __init__(self, root):
@@ -23,13 +23,7 @@ class WebcamApp:
         self.image_folder = None
         self.target_images = []
         self.matched_image_path = None
-
-
-        #self.target_image = None
-        #self.target_image_path = None
-        self.available_webcams = self.get_available_webcams()
-        #self.match_found= False
-
+        self.available_webcams = self.find_webcams()
 
         # Get the current script's directory
         script_directory = os.path.dirname(os.path.abspath(__file__))
@@ -125,32 +119,21 @@ class WebcamApp:
         self.match_label = tk.Label(self.root, text="", font=("Arial", 12, "bold"), fg="green")
         self.match_label.pack()
 
-    def get_available_webcams(self):
-        """ Get list of available webcams with descriptive names. """
-        available_devices = []
-        w = wmi.WMI()
-
-        for i in range(5):  # Check the first 5 devices (adjust if necessary)
-            cap = cv2.VideoCapture(i, cv2.CAP_DSHOW)
-            if cap.isOpened():
-                # Attempt to fetch device description using WMI for more detailed names
-                device_name = f"Webcam {i}"
-                try:
-                    # Using WMI to get video devices and their names
-                    for device in w.query("SELECT * FROM Win32_PnPEntity WHERE DeviceID LIKE '%VID%'"):
-                        if 'camera' in device.Caption.lower():
-                            device_name = device.Caption  # This should give the full device name
-                            break
-                except Exception as e:
-                    device_name = f"Webcam {i} - {str(e)}"
-                available_devices.append(f"Webcam {i} - {device_name}")
-                cap.release()
-        return available_devices
+    def find_webcams(self):
+        """Find available webcams and get their descriptive names."""
+        webcams = []
+        graph = FilterGraph()
+        devices = graph.get_input_devices()  # List of webcam names
+        
+        for index, device_name in enumerate(devices):
+            webcams.append((index, device_name))  # Store index and name as a tuple
+        
+        return webcams
 
     def start_webcam(self):
         """ Start the selected webcam feed and recognition loop. """
         selected_webcam = self.webcam_combobox.get()
-        webcam_index = int(selected_webcam.split(" ")[1])  # Extract webcam index
+        webcam_index = int(selected_webcam.split(" ")[0])  # Extract webcam index
         
         self.cap = cv2.VideoCapture(webcam_index, cv2.CAP_DSHOW)  # Use DirectShow backend
         if not self.cap.isOpened():
@@ -238,7 +221,7 @@ class WebcamApp:
                     self.match_label.config(text=f"Matched {self.matched_image_path}")
                     self.display_matched_image()
                     self.log_debug_message(f"Image match detected - {self.matched_image_path}")
-                    self.root.after(1000, self.clear_match_label)
+                    self.root.after(3000, self.clear_match_label)
         except queue.Empty:
             pass
 
