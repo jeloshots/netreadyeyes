@@ -37,9 +37,12 @@ class WebcamApp:
         # Set the current folder to the default image folder
         self.low_res_image_folder = self.default_image_folder
 
-        # Define the size of the "playing card" area (width, height)
-        self.card_width = 200
-        self.card_height = 300
+        # Define the size of the roi (region of interest) area (width, height)
+        self.roi_width = 200
+        self.roi_height = 300
+        # Define the height and width of the cards (low resolutoin)
+        self.card_width = 95
+        self.card_height = 133
 
         # Coordinates for the ROI (Region of Interest) - where the playing card sized area will be placed
         self.roi_x = 50  # X coordinate for the top-left corner
@@ -122,6 +125,18 @@ class WebcamApp:
         self.match_label = tk.Label(self.root, text="", font=("Arial", 12, "bold"), fg="green")
         self.match_label.pack()
 
+        #create image recognition objects for repeated use
+        self.orb = cv2.ORB_create()
+        # FLANN Matcher Parameters (optimized for ORB/SIFT)
+        index_params = dict(algorithm=6,  # FLANN LSH (Locality Sensitive Hashing) for ORB
+                            table_number=6,  # Number of hash tables
+                            key_size=12,  # Size of the key in bits
+                            multi_probe_level=1)  # Number of probes per table
+
+        search_params = dict(checks=50)  # Number of nearest neighbors to check
+
+        self.flann = cv2.FlannBasedMatcher(index_params, search_params)
+
     def find_webcams(self):
         """Find available webcams and get their descriptive names."""
         webcams = []
@@ -149,8 +164,8 @@ class WebcamApp:
             frame_height, frame_width, _ = frame.shape
 
             # Calculate center position for ROI
-            self.roi_x = (frame_width - self.card_width) // 2
-            self.roi_y = (frame_height - self.card_height) // 2
+            self.roi_x = (frame_width - self.roi_width) // 2
+            self.roi_y = (frame_height - self.roi_height) // 2
 
         self.is_running = True
         self.start_button.config(state=tk.DISABLED)
@@ -187,15 +202,15 @@ class WebcamApp:
                 #self.log_debug_message("in ret loop")
                 color = (0, 0, 255) if self.match_found else (0, 255, 0)
                 cv2.rectangle(frame, (self.roi_x, self.roi_y),
-                              (self.roi_x + self.card_width, self.roi_y + self.card_height), color, 3)
+                              (self.roi_x + self.roi_width, self.roi_y + self.roi_height), color, 3)
 
                 frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
                 image = Image.fromarray(frame_rgb)
                 
                 # Resize the frame to fit within a specified size (adjust as needed)
-                desired_width = 640  # Set a fixed width or make it dynamic
-                desired_height = 480  # Adjust height accordingly
-                image_resized = image.resize((desired_width, desired_height), Image.LANCZOS)
+                camera_width = 640  # Set a fixed width or make it dynamic
+                camera_height = 480  # Adjust height accordingly
+                image_resized = image.resize((camera_width, camera_height), Image.LANCZOS)
 
                 photo = ImageTk.PhotoImage(image=image_resized)
                 self.video_frame.config(image=photo)
@@ -286,32 +301,14 @@ class WebcamApp:
         start_time = time.time()
         if self.low_res_image_folder and self.target_images:
 
-            roi_frame = frame[self.roi_y:self.roi_y + self.card_height, self.roi_x:self.roi_x + self.card_width]
+            roi_frame = frame[self.roi_y:self.roi_y + self.roi_height, self.roi_x:self.roi_x + self.roi_width]
             #gray_frame = cv2.cvtColor(roi_frame, cv2.COLOR_BGR2GRAY)
 
-            #cv2.imshow("ROI Frame", roi_frame)
-            #cv2.waitKey(1) #Ensures the OpenCV window refreshes
-
-            width = 95
-            height = 133
-
-            roi_frame = cv2.resize(roi_frame, (width, height))
+            roi_frame = cv2.resize(roi_frame, (self.card_width, self.card_height))
             
-            orb = cv2.ORB_create()
             # find the keypoints and descriptors of the webcam frame with SIFT
-            kp2, des2 = orb.detectAndCompute(roi_frame, None)
-            
-            # FLANN Matcher Parameters (optimized for ORB/SIFT)
-            index_params = dict(algorithm=6,  # FLANN LSH (Locality Sensitive Hashing) for ORB
-                                table_number=6,  # Number of hash tables
-                                key_size=12,  # Size of the key in bits
-                                multi_probe_level=1)  # Number of probes per table
-
-            search_params = dict(checks=50)  # Number of nearest neighbors to check
-
-            flann = cv2.FlannBasedMatcher(index_params, search_params)
-
-            
+            kp2, des2 = self.orb.detectAndCompute(roi_frame, None)
+                        
             # create BFMatcher object
             #bf = cv2.BFMatcher(cv2.NORM_HAMMING, crossCheck=False)
 
@@ -323,7 +320,7 @@ class WebcamApp:
 
                 image_path = os.path.join(self.low_res_image_folder, image_name) # use full path
                 target_image = cv2.imread(image_path, cv2.IMREAD_GRAYSCALE)
-                #target_image = cv2.resize(target_image, (width, height))
+                #target_image = cv2.resize(target_image, (card_width, card_height))
 
                 #self.log_debug_message(f"comparing frame to {image_path}")
 
@@ -332,14 +329,14 @@ class WebcamApp:
                     continue # skip if image couldn't be loaded
                 
                 #find they keypoints and descriptors of the current image in the folder
-                kp1, des1 = orb.detectAndCompute(target_image, None)
+                kp1, des1 = self.orb.detectAndCompute(target_image, None)
 
                 if des1 is None or des2 is None:
                     self.log_debug_message("Error - need two images to compare")
                     return # Avoid running knnMatch() on None values
                 
                 k = min(2, len(des2))
-                matches = flann.knnMatch(des1, des2, k=k)
+                matches = self.flann.knnMatch(des1, des2, k=k)
 
                 # # Apply Lowe's ratio test (helps remove false matches)
                 for match in matches:
