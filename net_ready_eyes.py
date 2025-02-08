@@ -4,7 +4,6 @@ from tkinter import filedialog, messagebox
 from tkinter import ttk
 import os
 from PIL import Image, ImageTk
-import numpy as np
 import wmi
 import threading
 import queue
