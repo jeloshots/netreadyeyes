@@ -90,8 +90,10 @@ class WebcamApp:
         self.webcam_combobox.pack(side=tk.LEFT, padx=5)
         
         # Default to first webcam in the list
-        if self.available_webcams:
+        if len(self.available_webcams) >= 2:
             self.webcam_combobox.set(self.available_webcams[1]) #default to #1 for Eric's Machine
+        elif self.available_webcams:
+            self.webcam_combobox.set(self.available_webcams[0])
 
         # Bind mouse events for moving/resizing the ROI
         self.video_frame.grid(row=0, column=0, sticky="nsew")  # Allow expansion
