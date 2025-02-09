@@ -124,6 +124,18 @@ class WebcamApp:
         self.match_label = tk.Label(self.root, text="", font=("Arial", 12, "bold"), fg="green")
         self.match_label.pack()
 
+        #create image recognition objects for repeated use
+        self.orb = cv2.ORB_create()
+        # FLANN Matcher Parameters (optimized for ORB/SIFT)
+        index_params = dict(algorithm=6,  # FLANN LSH (Locality Sensitive Hashing) for ORB
+                            table_number=6,  # Number of hash tables
+                            key_size=12,  # Size of the key in bits
+                            multi_probe_level=1)  # Number of probes per table
+
+        search_params = dict(checks=50)  # Number of nearest neighbors to check
+
+        self.flann = cv2.FlannBasedMatcher(index_params, search_params)
+
     def find_webcams(self):
         """Find available webcams and get their descriptive names."""
         webcams = []
@@ -296,6 +308,14 @@ class WebcamApp:
 
         # Wait for user input to continue (press any key)
 
+    def rotate_image(self, image, angle):
+        """ Rotate image by a specified angle. """
+        (h, w) = image.shape[:2]
+        center = (w // 2, h // 2)
+        matrix = cv2.getRotationMatrix2D(center, angle, 1.0)
+        rotated = cv2.warpAffine(image, matrix, (w, h))
+        return rotated
+
     def perform_image_recognition(self, frame):
         """ Perform image recognition in a separate thread. """
         start_time = time.time()
@@ -314,20 +334,7 @@ class WebcamApp:
 
             roi_frame = cv2.resize(roi_frame, (width, height))
             
-            orb = cv2.ORB_create()
-            # find the keypoints and descriptors of the webcam frame with SIFT
-            kp2, des2 = orb.detectAndCompute(roi_frame, None)
-            
-            # FLANN Matcher Parameters (optimized for ORB/SIFT)
-            index_params = dict(algorithm=6,  # FLANN LSH (Locality Sensitive Hashing) for ORB
-                                table_number=6,  # Number of hash tables
-                                key_size=12,  # Size of the key in bits
-                                multi_probe_level=1)  # Number of probes per table
-
-            search_params = dict(checks=50)  # Number of nearest neighbors to check
-
-            flann = cv2.FlannBasedMatcher(index_params, search_params)
-
+            kp2, des2 = self.orb.detectAndCompute(roi_frame, None)
             
             # create BFMatcher object
             #bf = cv2.BFMatcher(cv2.NORM_HAMMING, crossCheck=False)
@@ -366,10 +373,9 @@ class WebcamApp:
                     filter_time += probe_end - probe_start
 
             if match_path and lowest_dist < self.match_threshold:
-                if os.path.basename(match_path).strip().startswith("alt_"):
-                    match_path = os.path.basename(match_path)[4:]
-                    print ("alt art")
-                
+                if match_path.strip().startswith("alt_"):
+                    match_path = match_path[4:]
+
                 #self.draw_and_pause(target_image, kp1, roi_frame, kp2, match)
                 high_res_path = os.path.join(self.high_res_image_folder, match_path)
                 self.log_debug_message(f"Match detected (distance of {lowest_dist}) - adding {match_path} to recognition_queue!")
