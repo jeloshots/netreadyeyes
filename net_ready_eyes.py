@@ -25,7 +25,13 @@ class WebcamApp:
         # Initialize variables
         self.cap = None  # This will be set after webcam selection
         self.is_running = False
-        self.match_color = False
+
+        self.match_occured = False
+        
+        #opencv uses BGR (Blue, Green, Red) by default
+        self.match_color = (132, 255, 0) #green
+        self.no_match_color = (0, 0, 255) #red
+
         self.recognition_queue = queue.Queue() # Queue for handling recognition results
         self.recognition_thread = None
         self.target_images = []
@@ -244,8 +250,8 @@ class WebcamApp:
             ret, frame = self.cap.read()
             if ret:
 
-                self.roi_color = (0, 255, 0) if self.match_color else (0, 0, 255)
-                print(f"self.match_color = {self.match_color}")
+                self.roi_color = self.match_color if self.match_occured else self.no_match_color
+                print(f"self.match_occured = {self.match_occured}")
                 print(f"self.roi_color = {self.roi_color}")
 
                 self.draw_roi_frame(frame)
@@ -297,7 +303,7 @@ class WebcamApp:
                 match_found = self.recognition_queue.get_nowait()
 
                 if match_found:
-                    self.match_color = True
+                    self.match_occured = True
                     self.matched_image_path = match_found
                     self.match_label.config(text=f"Matched {self.matched_image_path}")
                     self.display_matched_image()
@@ -308,7 +314,7 @@ class WebcamApp:
 
     def clear_match_label(self):
         self.match_label.config(text="")
-        self.match_color = False
+        self.match_occured = False
 
     def display_matched_image(self):
         if self.matched_image_path:
