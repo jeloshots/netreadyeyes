@@ -468,8 +468,8 @@ class WebcamApp:
 
     def on_roi_drag(self, event):
         if self.roi_dragging:
-            self.roi_x = max(0, min(event.x - self.roi_drag_offset[0], self.cap.get(3) - self.card_width))
-            self.roi_y = max(0, min(event.y - self.roi_drag_offset[1], self.cap.get(4) - self.card_height))
+            self.roi_x = max(0, min(event.x - self.roi_drag_offset[0], int(self.cap.get(3)) - self.card_width))
+            self.roi_y = max(0, min(event.y - self.roi_drag_offset[1], int(self.cap.get(4)) - self.card_height))
 
 
     def on_roi_release(self, event):
