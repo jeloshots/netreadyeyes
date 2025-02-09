@@ -9,6 +9,7 @@ import queue
 import random
 from pygrabber.dshow_graph import FilterGraph
 import time
+import concurrent.futures
 
 class WebcamApp:
     def __init__(self, root):
@@ -123,6 +124,8 @@ class WebcamApp:
         
         self.match_label = tk.Label(self.root, text="", font=("Arial", 12, "bold"), fg="green")
         self.match_label.pack()
+
+        self.worker_threads = 4 # todo: make configurable in UI
 
         #create image recognition objects for repeated use
         self.orb = cv2.ORB_create()
@@ -261,23 +264,39 @@ class WebcamApp:
             self.low_res_image_folder = folder_path
             self.folder_label.config(text=f"Current Folder: {self.low_res_image_folder}")
             self.target_images.clear()
-            for image_path in os.listdir(folder_path):
-                if image_path.endswith('.png') or image_path.endswith('.jpg'):
-                    image_path = os.path.join(self.low_res_image_folder, image_path)  # use full path
-                    target_image = cv2.imread(image_path, cv2.IMREAD_GRAYSCALE)
 
-                    rotated_stats = []
-                    for angle in [0, 90, 180, 270]:
-                        rotated_target = self.rotate_image(target_image, angle)
-                        rotated_stats.append(self.orb.detectAndCompute(rotated_target, None))
-                    self.target_images.append((image_path, rotated_stats))
+            def process_image(path):
+                target_image = cv2.imread(path, cv2.IMREAD_GRAYSCALE)
+                rotated_stats = []
+                for angle in [0, 90, 180, 270]:
+                    rotated_target = self.rotate_image(target_image, angle)
+                    rotated_stats.append(self.orb.detectAndCompute(rotated_target, None))
+                return rotated_stats
+
+            paths = os.listdir(folder_path)
+
+            with concurrent.futures.ThreadPoolExecutor(max_workers=self.worker_threads) as executor:
+                future2path = {}
+                for image_path in paths:
+                    if image_path.endswith('.png') or image_path.endswith('.jpg'):
+                        full_path = os.path.join(self.low_res_image_folder, image_path)
+                        future2path[executor.submit(process_image, full_path)] = image_path
+
+                for future in concurrent.futures.as_completed(future2path):
+                    image_path = future2path[future]
+                    try:
+                        image_stats = future.result()
+                    except Exception as exc:
+                        print(f'{image_path} generated an exception: {exc}')
+                    else:
+                        self.target_images.append((image_path, image_stats))
 
             if not self.target_images:
                 messagebox.showerror("Error", "No PNG or JPG images found in the selected folder.")
 
             end_time = time.time()
             elapsed_time = end_time - start_time
-            self.log_debug_message(f"Loaded {len(self.target_images)} images in {elapsed_time:.4f}.")
+            self.log_debug_message(f"Loaded {len(self.target_images)} images in {elapsed_time:.4f}s.")
             #randomize the order to remove selection bias
             random.shuffle(self.target_images)
 
@@ -293,7 +312,7 @@ class WebcamApp:
         print("Press any key to continue to the next image...")
         cv2.waitKey(0)  # Wait indefinitely until a key is pressed
         cv2.destroyAllWindows()
-    
+
     def draw(self, image1, keypoints1, image2, keypoints2, matches):
         """ Draws matches and pauses execution until a key is pressed """
 
@@ -343,34 +362,54 @@ class WebcamApp:
             match_path = None
             lowest_dist = 300.0 #use a high number to start - best matches are the lowest distance
 
-            for (image, stats) in self.target_images:
-                for kp1, des1 in stats:
+            def process_stat(stat, d2):
+                inner_dist = lowest_dist  # use a high number to start - best matches are the lowest distance
+                knn_t = 0
+                filter_t = 0
+
+                for kp1, des1 in stat:
                     if des1 is None or des2 is None:
                         continue  # Avoid running knnMatch() on None values
-
                     probe_start = time.time()
-                    matches = self.flann.knnMatch(des1, des2, k=min(2, len(des2)))
+                    matches = self.flann.knnMatch(des1, d2, k=min(2, len(d2)))
                     probe_end = time.time()
-                    knn_time += probe_end - probe_start
+                    knn_t += probe_end - probe_start
 
                     # # Apply Lowe's ratio test (helps remove false matches)
                     probe_start = time.time()
                     for match in matches:
                         if len(match) < 2:
-                            continue # skip if there aren't at least two matches
-                        m, n = match[:2] # Unpack only the first two matches
-                        
-                        #check to see if m is significantly better than n, and if so, consider it a good match
-                        #the lower the threshold, the strictor the test
-                        if m.distance < 0.75 * n.distance: #adjust ratio as needed
-                            
-                            if m.distance < lowest_dist:
-                                #self.log_debug_message(f"New lowest distance for {image_path}) - distance of {m.distance}!")
-                                #set the new best score (smallest ditance)
-                                match_path = image
-                                lowest_dist = m.distance
+                            continue  # skip if there aren't at least two matches
+                        m, n = match[:2]  # Unpack only the first two matches
+
+                        # check to see if m is significantly better than n, and if so, consider it a good match
+                        # the lower the threshold, the stricter the test
+                        if m.distance < 0.75 * n.distance:  # adjust ratio as needed
+                            if m.distance < inner_dist:
+                                # set the new best score (smallest distance)
+                                inner_dist = m.distance
+
                     probe_end = time.time()
-                    filter_time += probe_end - probe_start
+                    filter_t += probe_end - probe_start
+                return inner_dist, knn_t, filter_t
+
+            with concurrent.futures.ThreadPoolExecutor(max_workers=self.worker_threads) as executor:
+                future2path = {}
+                for (image, stats) in self.target_images:
+                    future2path[executor.submit(process_stat, stats, des2)] = image
+
+                for future in concurrent.futures.as_completed(future2path):
+                    image_path = future2path[future]
+                    try:
+                        dist, knn, f = future.result()
+                    except Exception as exc:
+                        print(f'{image_path} generated an exception: {exc}')
+                    else:
+                        knn_time += knn
+                        filter_time += f
+                        if dist < lowest_dist:
+                            lowest_dist = dist
+                            match_path = image_path
 
             if match_path and lowest_dist < self.match_threshold:
                 if match_path.strip().startswith("alt_"):
