@@ -53,8 +53,11 @@ class WebcamApp:
         # Video frame on the left
         self.video_frame = tk.Label(self.main_frame)
         self.video_frame.grid(row=0, column=0)
+
         self.video_frame.bind("<ButtonPress-1>", self.on_roi_press)
         self.video_frame.bind("<B1-Motion>", self.on_roi_drag)
+        self.video_frame.bind("<ButtonRelease-1>", self.on_roi_release)
+        self.video_frame.bind("<Motion>", self.on_mouse_move)
 
         # Debug log frame on the right
         self.debug_frame = tk.Frame(self.main_frame)
@@ -73,7 +76,6 @@ class WebcamApp:
         self.folder_label = tk.Label(self.root, text=f"Current Folder: {self.low_res_image_folder}")
         # Webcam selection dropdown
         self.webcam_label = tk.Label(self.root, text="Select Webcam:")
-        
         self.webcam_combobox = ttk.Combobox(self.root, values=self.available_webcams)
         
         # Create a frame to hold buttons more compactly
@@ -126,6 +128,9 @@ class WebcamApp:
         
         self.match_label = tk.Label(self.root, text="", font=("Arial", 12, "bold"), fg="green")
         self.match_label.pack()
+
+        self.video_width = 640  # Default width, update dynamically if needed
+        self.video_height = 480  # Default height, update dynamically if needed
 
         self.worker_threads = 4 # todo: make configurable in UI
 
@@ -212,9 +217,7 @@ class WebcamApp:
                 image = Image.fromarray(frame_rgb)
                 
                 # Resize the frame to fit within a specified size (adjust as needed)
-                desired_width = 640  # Set a fixed width or make it dynamic
-                desired_height = 480  # Adjust height accordingly
-                image_resized = image.resize((desired_width, desired_height), Image.LANCZOS)
+                image_resized = image.resize((self.video_width, self.video_height), Image.LANCZOS)
 
                 photo = ImageTk.PhotoImage(image=image_resized)
                 self.video_frame.config(image=photo)
@@ -456,12 +459,12 @@ class WebcamApp:
         """ Export the matched image to OBS as an image source. """ 
         # OBS integration (if needed) can go here
 
-    def on_roi_press(self, event):
-        """ Capture the starting point of the ROI move or resize action. """
-        # Check if user clicked inside the ROI for moving or resizing
-        if self.roi_x <= event.x <= self.roi_x + self.card_width and self.roi_y <= event.y <= self.roi_y + self.card_height:
-            self.roi_dragging = True
-            self.roi_drag_offset = (event.x - self.roi_x, event.y - self.roi_y)
+    # def on_roi_press(self, event):
+    #     """ Capture the starting point of the ROI move or resize action. """
+    #     # Check if user clicked inside the ROI for moving or resizing
+    #     if self.roi_x <= event.x <= self.roi_x + self.card_width and self.roi_y <= event.y <= self.roi_y + self.card_height:
+    #         self.roi_dragging = True
+    #         self.roi_drag_offset = (event.x - self.roi_x, event.y - self.roi_y)
 
     def on_roi_drag(self, event):
         if self.roi_dragging:
@@ -472,6 +475,127 @@ class WebcamApp:
     def on_roi_release(self, event):
         """ End the ROI dragging action. """
         self.roi_dragging = False
+
+    def on_roi_press(self, event):
+        """Handle mouse button press on ROI."""
+        x, y = event.x, event.y
+        margin = 10  # Sensitivity for resizing
+
+        # Detect which part of ROI is clicked (corners for resizing, inside for dragging)
+        if (self.roi_x - margin <= x <= self.roi_x + margin and 
+            self.roi_y - margin <= y <= self.roi_y + margin):
+            self.roi_resizing = "top_left"
+        elif (self.roi_x + self.card_width - margin <= x <= self.roi_x + self.card_width + margin and 
+            self.roi_y - margin <= y <= self.roi_y + margin):
+            self.roi_resizing = "top_right"
+        elif (self.roi_x - margin <= x <= self.roi_x + margin and 
+            self.roi_y + self.card_height - margin <= y <= self.roi_y + self.card_height + margin):
+            self.roi_resizing = "bottom_left"
+        elif (self.roi_x + self.card_width - margin <= x <= self.roi_x + self.card_width + margin and 
+            self.roi_y + self.card_height - margin <= y <= self.roi_y + self.card_height + margin):
+            self.roi_resizing = "bottom_right"
+        elif (self.roi_x <= x <= self.roi_x + self.card_width and 
+            self.roi_y <= y <= self.roi_y + self.card_height):
+            self.roi_dragging = True
+            self.roi_drag_offset = (x - self.roi_x, y - self.roi_y)
+        else:
+            self.roi_resizing = None
+            self.roi_dragging = False
+
+    # def on_roi_drag(self, event):
+    #     """Handle dragging or resizing of the ROI, optimized for performance."""
+    #     x, y = event.x, event.y
+    #     changed = False  # Flag to track if the ROI has changed
+
+    #     if self.roi_dragging:
+    #         new_x = x - self.roi_drag_offset[0]
+    #         new_y = y - self.roi_drag_offset[1]
+
+    #         # Prevent ROI from moving off-screen
+    #         if 0 <= new_x <= self.video_width - self.card_width:
+    #             self.roi_x = new_x
+    #             changed = True
+    #         if 0 <= new_y <= self.video_height - self.card_height:
+    #             self.roi_y = new_y
+    #             changed = True
+
+    #     elif self.roi_resizing:
+    #         min_size = 50  # Prevent ROI from being too small
+
+    #         if self.roi_resizing == "top_left":
+    #             new_width = self.card_width + (self.roi_x - x)
+    #             new_height = self.card_height + (self.roi_y - y)
+    #             if new_width >= min_size and 0 <= x < self.roi_x + self.card_width:
+    #                 self.roi_x = x
+    #                 self.card_width = new_width
+    #                 changed = True
+    #             if new_height >= min_size and 0 <= y < self.roi_y + self.card_height:
+    #                 self.roi_y = y
+    #                 self.card_height = new_height
+    #                 changed = True
+
+    #         elif self.roi_resizing == "top_right":
+    #             new_width = x - self.roi_x
+    #             new_height = self.card_height + (self.roi_y - y)
+    #             if new_width >= min_size and x <= self.video_width:
+    #                 self.card_width = new_width
+    #                 changed = True
+    #             if new_height >= min_size and 0 <= y < self.roi_y + self.card_height:
+    #                 self.roi_y = y
+    #                 self.card_height = new_height
+    #                 changed = True
+
+    #         elif self.roi_resizing == "bottom_left":
+    #             new_width = self.card_width + (self.roi_x - x)
+    #             new_height = y - self.roi_y
+    #             if new_width >= min_size and 0 <= x < self.roi_x + self.card_width:
+    #                 self.roi_x = x
+    #                 self.card_width = new_width
+    #                 changed = True
+    #             if new_height >= min_size and y <= self.video_height:
+    #                 self.card_height = new_height
+    #                 changed = True
+
+    #         elif self.roi_resizing == "bottom_right":
+    #             new_width = x - self.roi_x
+    #             new_height = y - self.roi_y
+    #             if new_width >= min_size and x <= self.video_width:
+    #                 self.card_width = new_width
+    #                 changed = True
+    #             if new_height >= min_size and y <= self.video_height:
+    #                 self.card_height = new_height
+    #                 changed = True
+
+    #     if changed:
+    #         self.update_frame()  # Only update frame if something changed
+
+    # def on_roi_release(self, event):
+    #     """Reset dragging and resizing flags."""
+    #     self.roi_dragging = False
+    #     self.roi_resizing = None
+
+    def on_mouse_move(self, event):
+        """Change cursor when near ROI edges to indicate resizing."""
+        x, y = event.x, event.y
+        margin = 10
+
+        if (self.roi_x - margin <= x <= self.roi_x + margin and 
+            self.roi_y - margin <= y <= self.roi_y + margin):
+            self.video_frame.config(cursor="size_nw_se")
+        elif (self.roi_x + self.card_width - margin <= x <= self.roi_x + self.card_width + margin and 
+            self.roi_y - margin <= y <= self.roi_y + margin):
+            self.video_frame.config(cursor="size_ne_sw")
+        elif (self.roi_x - margin <= x <= self.roi_x + margin and 
+            self.roi_y + self.card_height - margin <= y <= self.roi_y + self.card_height + margin):
+            self.video_frame.config(cursor="size_ne_sw")
+        elif (self.roi_x + self.card_width - margin <= x <= self.roi_x + self.card_width + margin and 
+            self.roi_y + self.card_height - margin <= y <= self.roi_y + self.card_height + margin):
+            self.video_frame.config(cursor="size_nw_se")
+        elif (self.roi_x <= x <= self.roi_x + self.card_width and 
+            self.roi_y <= y <= self.roi_y + self.card_height):
+            self.video_frame.config(cursor="fleur")
+        else:
+            self.video_frame.config(cursor="")
 
 
 if __name__ == "__main__":
