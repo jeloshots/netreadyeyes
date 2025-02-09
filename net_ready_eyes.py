@@ -10,21 +10,36 @@ import random
 from pygrabber.dshow_graph import FilterGraph
 import time
 import concurrent.futures
+import numpy as np
 
 class WebcamApp:
     def __init__(self, root):
         self.root = root
         self.root.title("Webcam Image Recognition")
+        cv2.namedWindow("Webcam")
+        cv2.setMouseCallback("Webcam", self.mouse_callback)
+        
+        #choose from rectangle, polygon, or auto - to do: make this selectable from a drop down, default to polygon (or from a config file's default)
+        self.detect_mode = "rectangle"
 
         # Initialize variables
         self.cap = None  # This will be set after webcam selection
         self.is_running = False
-        self.match_found = False
+        self.match_color = False
         self.recognition_queue = queue.Queue() # Queue for handling recognition results
         self.recognition_thread = None
         self.target_images = []
         self.matched_image_path = None
         self.available_webcams = self.find_webcams()
+        self.dragging_point = None # Stores which point of the polygon is being dragged
+        # Initialize polygon with 4 points (modify as needed)
+        self.polygon = np.array([
+            [100, 100],  # Top-left
+            [200, 100],  # Top-right
+            [200, 200],  # Bottom-right
+            [100, 200]   # Bottom-left
+        ], dtype=np.int32)
+        
 
         # Get the current script's directory
         script_directory = os.path.dirname(os.path.abspath(__file__))
@@ -158,6 +173,19 @@ class WebcamApp:
 
         self.flann = cv2.FlannBasedMatcher(index_params, search_params)
 
+
+    def mouse_callback(self, event, x, y, flags, param):
+        print("in mouse_callback()")
+        if event == cv2.EVENT_LBUTTONDOWN:  # Mouse click
+            for i, (px, py) in enumerate(self.polygon):
+                if abs(x - px) < 10 and abs(y - py) < 10:  # Click near a point
+                    self.dragging_point = i  # Store index of point
+                    break
+        elif event == cv2.EVENT_MOUSEMOVE and self.dragging_point is not None:
+            self.polygon[self.dragging_point] = [x, y]  # Move point
+        elif event == cv2.EVENT_LBUTTONUP:
+            self.dragging_point = None  # Stop dragging
+
     def find_webcams(self):
         """Find available webcams and get their descriptive names."""
         webcams = []
@@ -225,20 +253,13 @@ class WebcamApp:
         if self.is_running:
             ret, frame = self.cap.read()
             if ret:
+
+                self.roi_color = (0, 255, 0) if self.match_color else (0, 0, 255)
+                print(f"self.match_color = {self.match_color}")
+                print(f"self.roi_color = {self.roi_color}")
+
+                self.draw_roi_frame(frame)
                 #self.log_debug_message("in ret loop")
-                color = (0, 0, 255) if self.match_found else (0, 255, 0)
-                cv2.rectangle(frame, (self.roi_x, self.roi_y),
-                              (self.roi_x + self.card_width, self.roi_y + self.card_height), color, 3)
-
-                frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-                image = Image.fromarray(frame_rgb)
-                
-                # Resize the frame to fit within a specified size (adjust as needed)
-                image_resized = image.resize((self.video_width, self.video_height), Image.LANCZOS)
-
-                photo = ImageTk.PhotoImage(image=image_resized)
-                self.video_frame.config(image=photo)
-                self.video_frame.image = photo
 
                 # Start recognition in a separate thread if not already running
                 if self.recognition_thread is None or not self.recognition_thread.is_alive():
@@ -252,6 +273,33 @@ class WebcamApp:
 
                 self.root.after(self.recognition_frequency, self.update_frame)
 
+    def draw_roi_frame(self, frame):
+        if self.detect_mode == "rectangle":
+            cv2.rectangle(frame, (self.roi_x, self.roi_y),
+                            (self.roi_x + self.card_width, self.roi_y + self.card_height), self.roi_color, 3)
+
+            frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            image = Image.fromarray(frame_rgb)
+            
+            # Resize the frame to fit within a specified size (adjust as needed)
+            image_resized = image.resize((self.video_width, self.video_height), Image.LANCZOS)
+
+            photo = ImageTk.PhotoImage(image=image_resized)
+            self.video_frame.config(image=photo)
+            self.video_frame.image = photo
+        elif self.detect_mode == "polygon":
+            # Draw polygon
+            cv2.polylines(frame, [self.polygon], isClosed=True, color=self.roi_color, thickness=2)
+
+            # Draw points for dragging
+            for (px, py) in self.polygon:
+                cv2.circle(frame, (px, py), 5, (0, 0, 255), -1)
+
+            cv2.imshow("Webcam", frame)
+            cv2.waitKey(1)
+        elif self.detect_mode == "auto":
+            pass #to do: create automatic detect mode
+
     def process_recognition_results(self):
         """ Safely update UI from the main thread. """
         try:
@@ -259,16 +307,18 @@ class WebcamApp:
                 match_found = self.recognition_queue.get_nowait()
 
                 if match_found:
+                    self.match_color = True
                     self.matched_image_path = match_found
                     self.match_label.config(text=f"Matched {self.matched_image_path}")
                     self.display_matched_image()
                     self.log_debug_message(f"Image match detected - {self.matched_image_path}")
-                    self.root.after(3000, self.clear_match_label)
+                    self.root.after(1000, self.clear_match_label)
         except queue.Empty:
             pass
 
     def clear_match_label(self):
         self.match_label.config(text="")
+        self.match_color = False
 
     def display_matched_image(self):
         if self.matched_image_path:
