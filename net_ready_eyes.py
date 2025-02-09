@@ -121,15 +121,20 @@ class WebcamApp:
         self.threshold_label = tk.Label(self.root, text="Image Detection Threshold (perc of keypoints:")
         self.threshold_label.pack()
 
-        self.threshold_slider = tk.Scale(self.root, from_=0, to=100, resolution=1, orient=tk.HORIZONTAL, label="Threshold", command=self.update_threshold)
-        self.threshold_slider.set(20)  # Default threshold
-        self.threshold_slider.pack()
-        self.match_threshold = self.threshold_slider.get()  # Set initial match threshold in case it isn't used.
-         #entry text box that will update slider
+        #Entry box to update the slider of the image threshold
         self.entry_var = tk.DoubleVar()
         self.threshold_entry = tk.Entry(self.root, textvariable=self.entry_var)
         self.threshold_entry.pack()
         self.entry_var.trace_add("write", lambda *args: self.threshold_slider.set(self.entry_var.get()))
+        
+        #Slider to adjust the Image detection threshold
+        self.threshold_slider = tk.Scale(self.root, from_=0, to=100, resolution=1, orient=tk.HORIZONTAL, command=self.update_threshold)
+        self.threshold_slider.set(20)  # Default threshold
+        self.threshold_slider.pack()
+        self.match_threshold = self.threshold_slider.get()  # Set initial match threshold in case it isn't used.
+        #adjusts the threshold entry value when Slider is changed
+        # self.entry_var.set(self.threshold_slider.get())
+        
         
         self.match_label = tk.Label(self.root, text="", font=("Arial", 12, "bold"), fg="green")
         self.match_label.pack()
