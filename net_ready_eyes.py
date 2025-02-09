@@ -53,6 +53,8 @@ class WebcamApp:
         # Video frame on the left
         self.video_frame = tk.Label(self.main_frame)
         self.video_frame.grid(row=0, column=0)
+        self.video_frame.bind("<ButtonPress-1>", self.on_roi_press)
+        self.video_frame.bind("<B1-Motion>", self.on_roi_drag)
 
         # Debug log frame on the right
         self.debug_frame = tk.Frame(self.main_frame)
@@ -255,6 +257,11 @@ class WebcamApp:
             photo = ImageTk.PhotoImage(image=image_resized)
             self.match_frame.config(image=photo)
             self.match_frame.image = photo
+
+            # Save the high-res matched image to a file for OBS to import
+            export_path = os.path.join(os.path.dirname(__file__), "obs_export_image.png")
+            image.save(export_path)
+            self.log_debug_message(f"Saved high-res matched image to {export_path}")
 
     def select_image_folder(self):
         """ Let the user select a folder of images. """
