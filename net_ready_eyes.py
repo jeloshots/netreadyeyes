@@ -125,6 +125,11 @@ class WebcamApp:
         self.threshold_slider.set(20)  # Default threshold
         self.threshold_slider.pack()
         self.match_threshold = self.threshold_slider.get()  # Set initial match threshold in case it isn't used.
+         #entry text box that will update slider
+        self.entry_var = tk.DoubleVar()
+        self.threshold_entry = tk.Entry(self.root, textvariable=self.entry_var)
+        self.threshold_entry.pack()
+        self.entry_var.trace_add("write", lambda *args: self.threshold_slider.set(self.entry_var.get()))
         
         self.match_label = tk.Label(self.root, text="", font=("Arial", 12, "bold"), fg="green")
         self.match_label.pack()
