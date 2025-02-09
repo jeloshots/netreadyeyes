@@ -132,6 +132,8 @@ class WebcamApp:
         self.video_width = 640  # Default width, update dynamically if needed
         self.video_height = 480  # Default height, update dynamically if needed
 
+        self.root.protocol("WM_DELETE_WINDOW", self.on_closing)
+
         self.worker_threads = 4 # todo: make configurable in UI
 
         #create image recognition objects for repeated use
@@ -189,6 +191,7 @@ class WebcamApp:
         self.is_running = False
         if self.cap is not None:
             self.cap.release()
+            self.cap = None
         self.video_frame.config(image="")
         self.match_frame.config(image="")
         self.start_button.config(state=tk.NORMAL)
@@ -196,6 +199,10 @@ class WebcamApp:
 
         # Log message
         self.log_debug_message("Webcam stopped.")
+
+    def on_closing(self):
+        self.stop_webcam()
+        self.root.destroy()
 
     def update_frequency(self, value):
         self.recognition_frequency = int(value)
@@ -482,19 +489,19 @@ class WebcamApp:
         margin = 10  # Sensitivity for resizing
 
         # Detect which part of ROI is clicked (corners for resizing, inside for dragging)
-        if (self.roi_x - margin <= x <= self.roi_x + margin and 
+        if (self.roi_x - margin <= x <= self.roi_x + margin and
             self.roi_y - margin <= y <= self.roi_y + margin):
             self.roi_resizing = "top_left"
-        elif (self.roi_x + self.card_width - margin <= x <= self.roi_x + self.card_width + margin and 
+        elif (self.roi_x + self.card_width - margin <= x <= self.roi_x + self.card_width + margin and
             self.roi_y - margin <= y <= self.roi_y + margin):
             self.roi_resizing = "top_right"
-        elif (self.roi_x - margin <= x <= self.roi_x + margin and 
+        elif (self.roi_x - margin <= x <= self.roi_x + margin and
             self.roi_y + self.card_height - margin <= y <= self.roi_y + self.card_height + margin):
             self.roi_resizing = "bottom_left"
-        elif (self.roi_x + self.card_width - margin <= x <= self.roi_x + self.card_width + margin and 
+        elif (self.roi_x + self.card_width - margin <= x <= self.roi_x + self.card_width + margin and
             self.roi_y + self.card_height - margin <= y <= self.roi_y + self.card_height + margin):
             self.roi_resizing = "bottom_right"
-        elif (self.roi_x <= x <= self.roi_x + self.card_width and 
+        elif (self.roi_x <= x <= self.roi_x + self.card_width and
             self.roi_y <= y <= self.roi_y + self.card_height):
             self.roi_dragging = True
             self.roi_drag_offset = (x - self.roi_x, y - self.roi_y)
@@ -579,19 +586,19 @@ class WebcamApp:
         x, y = event.x, event.y
         margin = 10
 
-        if (self.roi_x - margin <= x <= self.roi_x + margin and 
+        if (self.roi_x - margin <= x <= self.roi_x + margin and
             self.roi_y - margin <= y <= self.roi_y + margin):
             self.video_frame.config(cursor="size_nw_se")
-        elif (self.roi_x + self.card_width - margin <= x <= self.roi_x + self.card_width + margin and 
+        elif (self.roi_x + self.card_width - margin <= x <= self.roi_x + self.card_width + margin and
             self.roi_y - margin <= y <= self.roi_y + margin):
             self.video_frame.config(cursor="size_ne_sw")
-        elif (self.roi_x - margin <= x <= self.roi_x + margin and 
+        elif (self.roi_x - margin <= x <= self.roi_x + margin and
             self.roi_y + self.card_height - margin <= y <= self.roi_y + self.card_height + margin):
             self.video_frame.config(cursor="size_ne_sw")
-        elif (self.roi_x + self.card_width - margin <= x <= self.roi_x + self.card_width + margin and 
+        elif (self.roi_x + self.card_width - margin <= x <= self.roi_x + self.card_width + margin and
             self.roi_y + self.card_height - margin <= y <= self.roi_y + self.card_height + margin):
             self.video_frame.config(cursor="size_nw_se")
-        elif (self.roi_x <= x <= self.roi_x + self.card_width and 
+        elif (self.roi_x <= x <= self.roi_x + self.card_width and
             self.roi_y <= y <= self.roi_y + self.card_height):
             self.video_frame.config(cursor="fleur")
         else:
