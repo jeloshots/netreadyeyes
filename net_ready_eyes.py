@@ -19,13 +19,23 @@ class WebcamApp:
         cv2.namedWindow("Webcam")
         cv2.setMouseCallback("Webcam", self.mouse_callback)
         
-        #choose from rectangle, polygon, or auto - to do: make this selectable from a drop down, default to polygon (or from a config file's default)
+        #choose from rectangle, polygon, or auto - to do: make this selectable from a drop down
+        # default to polygon (or from a config file's default)
+        
+        #self.detect_mode = "polygon"
         self.detect_mode = "rectangle"
+        #self.detect_mode = "auto"
 
         # Initialize variables
         self.cap = None  # This will be set after webcam selection
         self.is_running = False
-        self.match_color = False
+
+        self.match_occured = False
+
+        #opencv uses BGR (Blue, Green, Red) by default
+        self.match_color = (132, 255, 0) #green
+        self.no_match_color = (0, 0, 255) #red
+
         self.recognition_queue = queue.Queue() # Queue for handling recognition results
         self.recognition_thread = None
         self.target_images = []
@@ -92,6 +102,17 @@ class WebcamApp:
         # Webcam selection dropdown
         self.webcam_label = tk.Label(self.root, text="Select Webcam:")
         self.webcam_combobox = ttk.Combobox(self.root, values=self.available_webcams)
+
+        # Dropdown menu to select detect_mode
+        self.detect_mode_label = tk.Label(self.root, text="Detection Mode:")
+        self.detect_mode_label.pack(pady=5)
+
+        self.detect_mode_combobox = ttk.Combobox(self.root, values=["polygon", "rectangle", "auto"])
+        self.detect_mode_combobox.set(self.detect_mode)  # populate the box with the current value
+        self.detect_mode_combobox.pack(pady=5)
+
+        # Bind the combobox change event to update detect_mode
+        self.detect_mode_combobox.bind("<<ComboboxSelected>>", self.on_detect_mode_change)
         
         # Create a frame to hold buttons more compactly
         self.button_frame = tk.Frame(self.root)
@@ -173,6 +194,18 @@ class WebcamApp:
 
         self.flann = cv2.FlannBasedMatcher(index_params, search_params)
 
+    def on_detect_mode_change(self, event):
+            """This function is triggered when the user selects a different detection mode from the dropdown."""
+            selected_mode = self.detect_mode_combobox.get()
+            self.detect_mode = selected_mode  # Update the detect_mode variable
+
+            # Optionally, you can update the UI or log the change
+            print(f"Detection Mode set to: {self.detect_mode}")
+            self.log_debug_message(f"Detection Mode set to: {self.detect_mode}")
+            
+            # You can then update other parts of the program that depend on the detect_mode if needed
+            # Example: Update the ROI drawing logic based on the selected mode
+            self.update_frame()
 
     def mouse_callback(self, event, x, y, flags, param):
         print("in mouse_callback()")
@@ -223,6 +256,7 @@ class WebcamApp:
 
         # Log message
         self.log_debug_message(f"Started webcam: {selected_webcam} (ROI centered at: {self.roi_x}, {self.roi_y})")
+        self.log_debug_message(f"Detect mode set to {self.detect_mode}")
 
     def stop_webcam(self):
         """ Stop the webcam feed. """
@@ -254,8 +288,8 @@ class WebcamApp:
             ret, frame = self.cap.read()
             if ret:
 
-                self.roi_color = (0, 255, 0) if self.match_color else (0, 0, 255)
-                print(f"self.match_color = {self.match_color}")
+                self.roi_color = self.match_color if self.match_occured else self.no_match_color
+                print(f"self.match_occured = {self.match_occured}")
                 print(f"self.roi_color = {self.roi_color}")
 
                 self.draw_roi_frame(frame)
@@ -307,7 +341,7 @@ class WebcamApp:
                 match_found = self.recognition_queue.get_nowait()
 
                 if match_found:
-                    self.match_color = True
+                    self.match_occured = True
                     self.matched_image_path = match_found
                     self.match_label.config(text=f"Matched {self.matched_image_path}")
                     self.display_matched_image()
@@ -318,7 +352,7 @@ class WebcamApp:
 
     def clear_match_label(self):
         self.match_label.config(text="")
-        self.match_color = False
+        self.match_occured = False
 
     def display_matched_image(self):
         if self.matched_image_path:
