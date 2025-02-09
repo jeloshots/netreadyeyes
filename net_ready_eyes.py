@@ -87,8 +87,10 @@ class WebcamApp:
         self.webcam_combobox.pack(side=tk.LEFT, padx=5)
         
         # Default to first webcam in the list
-        if self.available_webcams:
+        if len(self.available_webcams) >= 2:
             self.webcam_combobox.set(self.available_webcams[1]) #default to #1 for Eric's Machine
+        elif self.available_webcams:
+            self.webcam_combobox.set(self.available_webcams[0])
 
         # Bind mouse events for moving/resizing the ROI
         self.video_frame.grid(row=0, column=0, sticky="nsew")  # Allow expansion
@@ -243,14 +245,27 @@ class WebcamApp:
         """ Let the user select a folder of images. """
         folder_path = filedialog.askdirectory(initialdir=self.low_res_image_folder)
         if folder_path:
+            start_time = time.time()
             self.low_res_image_folder = folder_path
             self.folder_label.config(text=f"Current Folder: {self.low_res_image_folder}")
-            self.target_images = [f for f in os.listdir(folder_path) if f.endswith('.png') or f.endswith('.jpg')]
-            if self.target_images:
-                self.log_debug_message(f"Loaded {len(self.target_images)} images.")
-            else:
+            self.target_images.clear()
+            for image_path in os.listdir(folder_path):
+                if image_path.endswith('.png') or image_path.endswith('.jpg'):
+                    image_path = os.path.join(self.low_res_image_folder, image_path)  # use full path
+                    target_image = cv2.imread(image_path, cv2.IMREAD_GRAYSCALE)
+
+                    rotated_stats = []
+                    for angle in [0, 90, 180, 270]:
+                        rotated_target = self.rotate_image(target_image, angle)
+                        rotated_stats.append(self.orb.detectAndCompute(rotated_target, None))
+                    self.target_images.append((image_path, rotated_stats))
+
+            if not self.target_images:
                 messagebox.showerror("Error", "No PNG or JPG images found in the selected folder.")
 
+            end_time = time.time()
+            elapsed_time = end_time - start_time
+            self.log_debug_message(f"Loaded {len(self.target_images)} images in {elapsed_time:.4f}.")
             #randomize the order to remove selection bias
             random.shuffle(self.target_images)
 
@@ -284,6 +299,8 @@ class WebcamApp:
     def perform_image_recognition(self, frame):
         """ Perform image recognition in a separate thread. """
         start_time = time.time()
+        knn_time = 0
+        filter_time = 0
         if self.low_res_image_folder and self.target_images:
 
             roi_frame = frame[self.roi_y:self.roi_y + self.card_height, self.roi_x:self.roi_x + self.card_width]
@@ -316,69 +333,64 @@ class WebcamApp:
             #bf = cv2.BFMatcher(cv2.NORM_HAMMING, crossCheck=False)
 
             #before we look through any images, reset our scores to zero
-            low_res_match = None
+            match_path = None
             lowest_dist = 300.0 #use a high number to start - best matches are the lowest distance
 
-            for image_name in self.target_images:
+            for (image, stats) in self.target_images:
+                for kp1, des1 in stats:
+                    if des1 is None or des2 is None:
+                        continue  # Avoid running knnMatch() on None values
 
-                image_path = os.path.join(self.low_res_image_folder, image_name) # use full path
-                target_image = cv2.imread(image_path, cv2.IMREAD_GRAYSCALE)
-                #target_image = cv2.resize(target_image, (width, height))
+                    probe_start = time.time()
+                    matches = self.flann.knnMatch(des1, des2, k=min(2, len(des2)))
+                    probe_end = time.time()
+                    knn_time += probe_end - probe_start
 
-                #self.log_debug_message(f"comparing frame to {image_path}")
-
-                if target_image is None:
-                    self.log_debug_message("skipping - couldn't load")
-                    continue # skip if image couldn't be loaded
-                
-                #find they keypoints and descriptors of the current image in the folder
-                kp1, des1 = orb.detectAndCompute(target_image, None)
-
-                if des1 is None or des2 is None:
-                    self.log_debug_message("Error - need two images to compare")
-                    return # Avoid running knnMatch() on None values
-                
-                k = min(2, len(des2))
-                matches = flann.knnMatch(des1, des2, k=k)
-
-                # # Apply Lowe's ratio test (helps remove false matches)
-                for match in matches:
-                    if len(match) < 2:
-                        continue # skip if there aren't at least two matches
-                    m, n = match[:2] # Unpack only the first two matches
-                    
-                    #check to see if m is significantly better than n, and if so, consider it a good match
-                    #the lower the threshold, the strictor the test
-                    if m.distance < 0.75 * n.distance: #adjust ratio as needed
+                    # # Apply Lowe's ratio test (helps remove false matches)
+                    probe_start = time.time()
+                    for match in matches:
+                        if len(match) < 2:
+                            continue # skip if there aren't at least two matches
+                        m, n = match[:2] # Unpack only the first two matches
                         
-                        if m.distance < lowest_dist:
-                            #self.log_debug_message(f"New lowest distance for {image_path}) - distance of {m.distance}!")
-                            #set the new best score (smallest ditance)
-                            low_res_match = image_path
-                            lowest_dist = m.distance
+                        #check to see if m is significantly better than n, and if so, consider it a good match
+                        #the lower the threshold, the strictor the test
+                        if m.distance < 0.75 * n.distance: #adjust ratio as needed
+                            
+                            if m.distance < lowest_dist:
+                                #self.log_debug_message(f"New lowest distance for {image_path}) - distance of {m.distance}!")
+                                #set the new best score (smallest ditance)
+                                match_path = image
+                                lowest_dist = m.distance
+                    probe_end = time.time()
+                    filter_time += probe_end - probe_start
 
-            if low_res_match and lowest_dist < self.match_threshold:
-                if os.path.basename(low_res_match).strip().startswith("alt_"):
-                    low_res_match = os.path.basename(low_res_match)[4:]
+            if match_path and lowest_dist < self.match_threshold:
+                if os.path.basename(match_path).strip().startswith("alt_"):
+                    match_path = os.path.basename(match_path)[4:]
                     print ("alt art")
-                else:
-                    pass #does nothing but looks better imo -jeloshots
-                    print ("not alt art")
+                
                 #self.draw_and_pause(target_image, kp1, roi_frame, kp2, match)
-                high_res_match = os.path.join(self.high_res_image_folder, os.path.basename(low_res_match))
-                self.log_debug_message(f"Match detected (distance of {lowest_dist}) - adding {low_res_match} to recognition_queue!")
+                high_res_path = os.path.join(self.high_res_image_folder, match_path)
+                self.log_debug_message(f"Match detected (distance of {lowest_dist}) - adding {match_path} to recognition_queue!")
                 # Ensure the high-resolution file exists before adding it to the queue
-                if os.path.exists(high_res_match):
-                    self.log_debug_message(f"Match detected - using high-res version: {high_res_match}")
-                    self.recognition_queue.put(high_res_match)
+                if os.path.exists(high_res_path):
+                    self.log_debug_message(f"Match detected - using high-res version: {high_res_path}")
+                    self.recognition_queue.put(high_res_path)
                 else:
-                    self.log_debug_message(f"High-resolution version not found ({high_res_match}), using low-res: {low_res_match}")
-                    self.recognition_queue.put(low_res_match)
+                    low_res_path = os.path.join(self.low_res_image_folder, match_path)
+                    if os.path.exists(high_res_path):
+                        self.log_debug_message(f"High-resolution version not found ({high_res_path}), using low-res: {low_res_path}")
+                        self.recognition_queue.put(low_res_path)
+                    else:
+                        self.log_debug_message(f"No path found")
+
 
             #print how long parsing all of the images took
             end_time = time.time()
             elapsed_time = end_time - start_time
             self.log_debug_message(f"Image recognition took {elapsed_time:.4f} seconds for {len(self.target_images)} images.")
+            self.log_debug_message(f"knn: {knn_time:.4f}, filter: {filter_time:.4f}")
 
 
     def log_debug_message(self, message):
